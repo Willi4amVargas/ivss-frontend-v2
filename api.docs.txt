@@ -1,0 +1,181 @@
+# API Specification for AI Agent: ICD-11 Entity Search
+
+## 1. Global Configuration (Headers & Defaults)
+
+These values must be applied to all requests unless explicitly overridden.
+
+* **`API-Version` (Header):** `v2` *(Mandatory)*
+* **`Accept-Language` (Header):** `es` *(Mandatory - Default to Spanish)*
+* **Default `releaseId` (Query Param):** `2026-01` *(Recommended as the most current version)*
+
+---
+
+## 2. Allowed Values for `releaseId` (Classification Matrix)
+
+When implementing a selector or fallback in the frontend, use this structured data to know which versions and languages are valid.
+
+```json
+[
+  {
+    "releaseId": "2026-01",
+    "status": "Latest / Recommended",
+    "supported_languages": ["Arabic", "Chinese", "Czech", "English", "French", "German", "Kazakh", "Latin", "Portuguese", "Russian", "Slovak", "Spanish", "Swedish", "Turkish", "Uzbek", "Armenian", "Estonian", "Finnish", "Italian", "Mongolian", "Ukrainian"]
+  },
+  {
+    "releaseId": "2025-01",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "Chinese", "Czech", "English", "French", "Kazakh", "Latin", "Portuguese", "Russian", "Slovak", "Spanish", "Swedish", "Turkish", "Uzbek"]
+  },
+  {
+    "releaseId": "2024-01",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "Chinese", "Czech", "English", "French", "Portuguese", "Russian", "Spanish", "Turkish", "Uzbek", "Czech", "English", "Turkish"]
+  },
+  {
+    "releaseId": "2023-01",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "Chinese", "English", "French", "Russian", "Spanish", "Turkish"]
+  },
+  {
+    "releaseId": "2022-02",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "Chinese", "English", "French", "Spanish"]
+  },
+  {
+    "releaseId": "2021-05",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "Chinese", "English", "Spanish"]
+  },
+  {
+    "releaseId": "2020-09",
+    "status": "Legacy",
+    "supported_languages": ["Arabic", "English", "Spanish"]
+  },
+  {
+    "releaseId": "2019-04",
+    "status": "Legacy",
+    "supported_languages": ["English"]
+  },
+  {
+    "releaseId": "2018",
+    "status": "Legacy",
+    "supported_languages": ["English"]
+  }
+]
+
+```
+
+---
+
+## 3. Endpoint Definition
+
+### `GET /icd/entity/search`
+
+* **Description:** Searches the foundation component of the ICD-11.
+* **Alternative Method:** `POST /icd/entity/search` (Use **only** if the request payload/URL size exceeds 2KB to avoid HTTP limits).
+
+### Request Headers
+
+| Header Name | Type | Required | Default Value | Description |
+| --- | --- | --- | --- | --- |
+| `API-Version` | string | **Yes** | `v2` | Target version of the API. |
+| `Accept-Language` | string | **Yes** | `es` | Multi-lingual response language code. |
+
+### Query Parameters
+
+| Parameter Name | Type | Required | Default Value | Description |
+| --- | --- | --- | --- | --- |
+| `q` | string | **Yes** | *None* | Text to search. Use `%` at the end of a word for wildcard searching (e.g., `cardio%`). |
+| `releaseId` | string | No | `2026-01` | Specific ICD-11 release version. If omitted, the API defaults to the latest. |
+| `subtreesFilter` | string | No | *None* | Comma-separated list of URIs to restrict search to those entities and their descendants. |
+| `chapterFilter` | string | No | *None* | Comma or semicolon-separated list of chapter codes (e.g., `01;02;21`). |
+| `useFlexisearch` | boolean | No | `false` | If `true`, enables flexible search (matches partial terms). Recommended only if regular search yields 0 results. |
+| `flatResults` | boolean | No | `false` | If `true`, returns a flat list of matches. If `false`, returns a nested hierarchical data structure. |
+| `propertiesToBeSearched` | string | No | `Title,Synonym,FullySpecifiedName` | Comma-separated properties to target. Allowed values: `"Title"`, `"Synonym"`, `"NarrowerTerm"`, `"FullySpecifiedName"`, `"Definition"`, `"Exclusion"`. |
+| `highlightingEnabled` | boolean | No | `true` | If `false`, turns off special HTML/text tags highlighting where the matches were found. |
+
+---
+
+## 4. Response Schema & Interpretation Logic
+
+The endpoint returns a master object representing the search results, structured by entities and complemented by word suggestions or error metadata.
+
+### Root Object Structure: `ISearchResult`
+
+This is the primary container returned by the API. The AI agent must evaluate the execution status before extracting the entities.
+
+* **`destinationEntities`** (List of Objects): Array containing the entities that matched the search query. It follows the `ISimpleEntity` schema.
+* **`error`** (Boolean): Indicates if the operation failed. If `true`, the agent must halt processing and inspect the error message.
+* **`errorMessage`** (String / Nullable): Descriptive text of the error encountered when `error` is true.
+* **`resultChopped`** (Boolean): Safety flag. If `true`, the search query matched too many results and the system truncated the output. The agent should consider suggesting a more specific query parameter `q`.
+* **`wordSuggestionsChopped`** (Boolean): Indicates whether the accompanying word suggestions list exceeded limits and was truncated.
+* **`guessType`** (Integer Enum): Defines the prediction behavior.
+* `0`, `1`, `2`: Internal classification indexes for query matching.
+
+
+* **`uniqueSearchId`** (String / UUID): Unique identifier for logging or tracking this specific request execution.
+* **`words`** (List of Objects): Array of autocomplete or next-word suggestions based on the query. It follows the `GuessWord` schema.
+
+---
+
+### Entity Object Structure: `ISimpleEntity`
+
+Represents a single ICD-11 Entity within the search results. Depending on configuration, it can act as a standalone node or a parent node in a hierarchy.
+
+* **`id`** (String / Nullable): The official URI of the entity within the ICD-11 foundation.
+* **`title`** (String / Nullable): The core name of the entity. If `highlightingEnabled` was `true`, the matched terms will include text marking indicators (e.g., *Vibrio cholera*).
+* **`stemId`** (String / Nullable): Contains the URI of the stem code. In foundation searches, this value is identical to the `id`.
+* **`isLeaf`** (Boolean): Flag indicating if the node is terminal (has no children/descendants).
+* **`postcoordinationAvailability`** (Integer Enum): Indicates if the entity supports postcoordination combinations.
+* `0`, `1`, `2`: Availability scales.
+
+
+* **`hasCodingNote`** (Boolean): `true` if there is an active note providing guidance on how to code this item.
+* **`hasMaternalChapterLink` / `hasPerinatalChapterLink**` (Boolean): Structural flags indicating cross-linkages to maternal or perinatal specialized chapters.
+* **`matchingPVs`** (List of Objects): Detailed list of specific property values where the search term was found. Follows the `ISimplePropertyValue` schema.
+* **`propertiesTruncated`** (Boolean): `true` if the entity contained too many matching property values and the array was capped.
+* **`isResidualOther` / `isResidualUnspecified**` (Boolean): Operational flags identifying if the entity is a residual category (e.g., "Other specified..." or "Unspecified..."). *Note: Not applicable during standard foundation searches.*
+* **`chapter`** (String / Nullable): The specific chapter code assigned to this entity.
+* **`theCode`** (String / Nullable): The final assigned code for the entity. *Note: Not applicable during standard foundation searches.*
+* **`score`** (Number / Double): Relative search relevance score. Higher values indicate a stronger, more accurate match.
+* **`titleIsASearchResult`** (Boolean): Confirms if the main entity title itself triggered the match.
+* **`titleIsTopScore`** (Boolean): Confirms if the entity title represents the absolute highest match score within the current dataset context.
+* **`entityType`** (Integer Enum): Defines the physical nature of the entity within the database framework:
+* `0` (Real): Authentic entity present in the linearization or foundation.
+* `1` (UnderShoreLineLogicallyDefined): Foundation entity represented as a post-coordination combination in the linearization.
+* `2` (PostCoordinationCombination): Virtual item that does not exist in the foundation but is constructed via post-coordination logic.
+
+
+* **`important`** (Boolean): High-relevance flag. `true` indicates a flawless match where all words in the query parameter `q` were fulfilled.
+* **`descendants`** (List of Objects): Recursive array of `ISimpleEntity` items.
+* **Crucial Agent Routing Logic:** If the parameter `flatResults` is set to `false`, the API response organizes data hierarchically, meaning child matches are nested here. If `flatResults` is `true`, this array remains empty, and all matches are forced into the root `destinationEntities` list.
+
+
+
+---
+
+### Property Match Structure: `ISimplePropertyValue`
+
+Details exactly which metadata field within an entity (e.g., a synonym or definition) satisfied the search criteria.
+
+* **`propertyId`** (String / Nullable): Internal identifier of the specific target property.
+* **`label`** (String / Nullable): The text string inside the property that triggered the match (supports text markup highlighting).
+* **`score`** (Number / Double): Relevance score calculated specifically for this property value.
+* **`important`** (Boolean): `true` if this specific field successfully matched every word present in the search query.
+* **`foundationUri`** (String / Nullable): The exact foundation URI housing this property value. Used exclusively during linearization searches for entities below the shoreline.
+* **`propertyValueType`** (Integer Enum): Structural classification of the source:
+* `0` (Real): Index info originating from a linearization entity.
+* `1` (UnderShoreLine): Index entity below the shoreline boundary.
+* `2` (UnderShoreLineLogicallyDefined): Index entity below the shoreline possessing a strict logical definition.
+* `3` (PostCoordinationCombination): Virtual index entity generated dynamically from post-coordination maps.
+
+
+
+---
+
+### Word Suggestion Structure: `GuessWord`
+
+Provides linguistic support for search execution interfaces.
+
+* **`label`** (String / Nullable): The recommended word completion or sequential word recommendation generated by the search index.
+* **`dontChangeResult`** (Boolean): Operational flag instructing the interface whether accepting this suggestion should force a new query execution or merely update the input buffer text.

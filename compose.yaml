@@ -1,0 +1,11 @@
+services:
+  icd-api:
+    image: whoicd/icd-api:latest
+    container_name: icd_api_service
+    ports:
+      - "5359:80"
+    environment:
+      - include=2026-01_es
+      - acceptLicense=true
+      - saveAnalytics=true
+    restart: unless-stopped
